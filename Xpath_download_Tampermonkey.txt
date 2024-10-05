@@ -1,0 +1,301 @@
+// ==UserScript==
+// @name         Element Inspector with Area Selection, JSON Export, and Download
+// @namespace    http://tampermonkey.net/
+// @version      2.4
+// @description  Show area, path of HTML element on hover, collect XPaths as JSON on click, and download collected data. Clicks only register XPaths in selection mode without affecting the page. Added Clear button and persistence across page loads. Buttons now always on top with icons.
+// @author       Amir Bagherzadeh
+// @match        *://*/*
+// @grant        GM_getValue
+// @grant        GM_setValue
+// ==/UserScript==
+
+(function() {
+    'use strict';
+
+    // State to track active selection mode and collected XPaths
+    let selectionActive = false;
+
+    // Retrieve stored data or initialize to empty object
+    let xpathData = JSON.parse(GM_getValue('xpathData', '{}'));
+
+    // Retrieve stored counter or initialize to 1
+    let idCounter = GM_getValue('idCounter', 1);
+
+    // Create and style the overlay element for displaying the info
+    const overlay = document.createElement('div');
+    overlay.style.position = 'fixed';
+    overlay.style.backgroundColor = 'rgba(0, 0, 0, 0.7)';
+    overlay.style.color = '#fff';
+    overlay.style.padding = '5px';
+    overlay.style.borderRadius = '5px';
+    overlay.style.zIndex = '2147483647';
+    overlay.style.pointerEvents = 'none';
+    overlay.style.display = 'none';
+    document.body.appendChild(overlay);
+
+    // SVG icons for the buttons
+    const selectIconSVG = `
+        <svg viewBox="0 0 64 64" width="24" height="24">
+            <path d="M2 2 L30 30 L22 30 L22 40 L30 40 L30 62 L2 2 Z" fill="currentColor"/>
+        </svg>`;
+    const clearIconSVG = `
+        <svg viewBox="0 0 64 64" width="24" height="24">
+            <path d="M16 8 L48 8 L48 16 L58 16 L58 24 L6 24 L6 16 L16 16 Z M12 24 L52 24 L48 58 L16 58 Z" fill="currentColor"/>
+        </svg>`;
+    const downloadIconSVG = `
+        <svg viewBox="0 0 64 64" width="24" height="24">
+            <path d="M32 48 L48 32 L40 32 L40 8 L24 8 L24 32 L16 32 Z M8 56 L56 56 L56 40 L48 40 L48 48 L16 48 L16 40 L8 40 Z" fill="currentColor"/>
+        </svg>`;
+
+    // Create the button for selection
+    const actionButton = document.createElement('button');
+    actionButton.innerHTML = selectIconSVG;
+    actionButton.title = 'Select Areas';
+    actionButton.style.position = 'fixed';
+    actionButton.style.top = '10px';
+    actionButton.style.left = '10px';
+    actionButton.style.width = '40px';
+    actionButton.style.height = '40px';
+    actionButton.style.zIndex = '2147483647';
+    actionButton.style.padding = '5px';
+    actionButton.style.backgroundColor = 'blue';
+    actionButton.style.color = 'white';
+    actionButton.style.border = 'none';
+    actionButton.style.borderRadius = '5px';
+    actionButton.style.cursor = 'pointer';
+    actionButton.style.display = 'flex';
+    actionButton.style.alignItems = 'center';
+    actionButton.style.justifyContent = 'center';
+    document.body.appendChild(actionButton);
+
+    // Create the Clear button
+    const clearButton = document.createElement('button');
+    clearButton.innerHTML = clearIconSVG;
+    clearButton.title = 'Clear';
+    clearButton.style.position = 'fixed';
+    clearButton.style.top = '10px';
+    clearButton.style.left = '60px';
+    clearButton.style.width = '40px';
+    clearButton.style.height = '40px';
+    clearButton.style.zIndex = '2147483647';
+    clearButton.style.padding = '5px';
+    clearButton.style.backgroundColor = 'red';
+    clearButton.style.color = 'white';
+    clearButton.style.border = 'none';
+    clearButton.style.borderRadius = '5px';
+    clearButton.style.cursor = 'pointer';
+    clearButton.style.display = 'none';
+    clearButton.style.alignItems = 'center';
+    clearButton.style.justifyContent = 'center';
+    document.body.appendChild(clearButton);
+
+    // Create the Download button
+    const downloadButton = document.createElement('button');
+    downloadButton.innerHTML = downloadIconSVG;
+    downloadButton.title = 'Download JSON';
+    downloadButton.style.position = 'fixed';
+    downloadButton.style.top = '10px';
+    downloadButton.style.left = '110px';
+    downloadButton.style.width = '40px';
+    downloadButton.style.height = '40px';
+    downloadButton.style.zIndex = '2147483647';
+    downloadButton.style.padding = '5px';
+    downloadButton.style.backgroundColor = 'green';
+    downloadButton.style.color = 'white';
+    downloadButton.style.border = 'none';
+    downloadButton.style.borderRadius = '5px';
+    downloadButton.style.cursor = 'pointer';
+    downloadButton.style.display = 'none';
+    downloadButton.style.alignItems = 'center';
+    downloadButton.style.justifyContent = 'center';
+    document.body.appendChild(downloadButton);
+
+    // Create the text area to display collected XPaths in JSON format
+    const xpathTextArea = document.createElement('textarea');
+    xpathTextArea.style.position = 'fixed';
+    xpathTextArea.style.top = '60px';
+    xpathTextArea.style.left = '10px';
+    xpathTextArea.style.width = '400px';
+    xpathTextArea.style.height = '300px';
+    xpathTextArea.style.zIndex = '2147483647';
+    xpathTextArea.style.padding = '10px';
+    xpathTextArea.style.display = 'none';
+    xpathTextArea.style.fontSize = '12px';
+    xpathTextArea.style.fontFamily = 'monospace';
+    document.body.appendChild(xpathTextArea);
+
+    // Variable to keep track of the currently highlighted element
+    let highlightedElement = null;
+
+    // Function to calculate the full XPath of an element
+    function getElementXPath(element) {
+        if (element.id !== '') {
+            return 'id("' + element.id + '")';
+        } else {
+            const parts = [];
+            while (element && element.nodeType === Node.ELEMENT_NODE) {
+                let index = 1;
+                let sibling = element.previousSibling;
+                while (sibling) {
+                    if (sibling.nodeType === Node.DOCUMENT_TYPE_NODE) {
+                        sibling = sibling.previousSibling;
+                        continue;
+                    }
+                    if (sibling.nodeName === element.nodeName) {
+                        index++;
+                    }
+                    sibling = sibling.previousSibling;
+                }
+                const tagName = element.nodeName.toLowerCase();
+                const part = (tagName + '[' + index + ']');
+                parts.unshift(part);
+                element = element.parentNode;
+            }
+            return '/' + parts.join('/');
+        }
+    }
+
+    // Function to download JSON data
+    function downloadJSON() {
+        const jsonString = JSON.stringify(xpathData, null, 2);
+        const blob = new Blob([jsonString], {type: "application/json"});
+        const url = URL.createObjectURL(blob);
+
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'xpath_data.json';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    }
+
+    // Function to update button visibility
+    function updateButtonVisibility() {
+        if (Object.keys(xpathData).length > 0) {
+            xpathTextArea.style.display = 'block';
+            clearButton.style.display = 'flex';
+            downloadButton.style.display = 'flex';
+        } else {
+            xpathTextArea.style.display = 'none';
+            clearButton.style.display = 'none';
+            downloadButton.style.display = 'none';
+        }
+    }
+
+    // Handle button click for selecting areas
+    actionButton.addEventListener('click', () => {
+        if (!selectionActive) {
+            selectionActive = true;
+            actionButton.style.backgroundColor = 'green';
+            actionButton.title = 'Selection Mode: Active';
+            updateButtonVisibility();
+        } else {
+            selectionActive = false;
+            actionButton.style.backgroundColor = 'blue';
+            actionButton.title = 'Select Areas';
+            if (highlightedElement) {
+                highlightedElement.style.outline = '';
+                highlightedElement = null;
+            }
+        }
+    });
+
+    // Clear button functionality
+    clearButton.addEventListener('click', () => {
+        xpathData = {};
+        idCounter = 1;
+        xpathTextArea.value = '';
+        GM_setValue('xpathData', JSON.stringify(xpathData));
+        GM_setValue('idCounter', idCounter);
+        updateButtonVisibility();
+    });
+
+    // Download button functionality
+    downloadButton.addEventListener('click', downloadJSON);
+
+    // Event listener for mouse movement
+    document.addEventListener('mousemove', (e) => {
+        if (!selectionActive) return;
+
+        const target = e.target;
+
+        if (highlightedElement !== target) {
+            if (highlightedElement) {
+                highlightedElement.style.outline = '';
+            }
+            highlightedElement = target;
+            highlightedElement.style.outline = '2px solid red';
+        }
+
+        const rect = target.getBoundingClientRect();
+        const width = Math.round(rect.width);
+        const height = Math.round(rect.height);
+
+        const path = getElementXPath(target);
+        overlay.innerHTML = `XPath: ${path}<br>Width: ${width}px, Height: ${height}px`;
+
+        overlay.style.left = `${e.clientX + 10}px`;
+        overlay.style.top = `${e.clientY + 10}px`;
+        overlay.style.display = 'block';
+    });
+
+    // Collect XPath on click and prevent any default action
+    document.addEventListener('click', (e) => {
+        if (!selectionActive) return;
+
+        if (e.target === actionButton || e.target === xpathTextArea || e.target === clearButton || e.target === downloadButton) return;
+
+        e.preventDefault();
+        e.stopImmediatePropagation();
+
+        const target = e.target;
+        const path = getElementXPath(target);
+        const id = 'ID_' + idCounter++;
+        xpathData[id] = path;
+
+        xpathTextArea.value = JSON.stringify(xpathData, null, 2);
+
+        GM_setValue('xpathData', JSON.stringify(xpathData));
+        GM_setValue('idCounter', idCounter);
+
+        updateButtonVisibility();
+
+        return false;
+    }, true);
+
+    // Prevent default actions on mousedown and mouseup
+    document.addEventListener('mousedown', (e) => {
+        if (selectionActive) {
+            if (e.target !== actionButton && e.target !== xpathTextArea && e.target !== clearButton && e.target !== downloadButton) {
+                e.preventDefault();
+                e.stopImmediatePropagation();
+                return false;
+            }
+        }
+    }, true);
+
+    document.addEventListener('mouseup', (e) => {
+        if (selectionActive) {
+            if (e.target !== actionButton && e.target !== xpathTextArea && e.target !== clearButton && e.target !== downloadButton) {
+                e.preventDefault();
+                e.stopImmediatePropagation();
+                return false;
+            }
+        }
+    }, true);
+
+    // Event listener for when the mouse leaves the document
+    document.addEventListener('mouseout', () => {
+        if (highlightedElement) {
+            highlightedElement.style.outline = '';
+        }
+        overlay.style.display = 'none';
+    });
+
+    // Initialize the display based on stored data
+    if (Object.keys(xpathData).length > 0) {
+        xpathTextArea.value = JSON.stringify(xpathData, null, 2);
+        updateButtonVisibility();
+    }
+})();

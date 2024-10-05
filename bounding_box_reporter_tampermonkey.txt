@@ -1,0 +1,77 @@
+// ==UserScript==
+// @name         Element Location Tracker
+// @namespace    http://tampermonkey.net/
+// @version      1.2
+// @description  Tracks the location of elements based on XPath and sends them through a WebSocket
+// @author       OpenAI
+// @match        *://*/*
+// @grant        none
+// ==/UserScript==
+
+(function() {
+    'use strict';
+
+    // WebSocket URL (change to your server address)
+    const socketUrl = 'ws://localhost:8080';
+    const socket = new WebSocket(socketUrl);
+
+    socket.onopen = function() {
+        console.log('WebSocket connection established.');
+    };
+
+    socket.onerror = function(error) {
+        console.error('WebSocket Error: ', error);
+    };
+
+    // Function to get an element by XPath
+    function getElementByXPath(xpath) {
+        return document.evaluate(xpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+    }
+
+    // Function to gather locations of all elements and send them
+    function gatherAndSendElementLocations() {
+        const elementsInfo = [];
+
+        xpathsToTrack.forEach(xpath => {
+            const element = getElementByXPath(xpath);
+            if (element) {
+                const rect = element.getBoundingClientRect();
+                elementsInfo.push({
+                    xpath: xpath,
+                    x: rect.x,
+                    y: rect.y,
+                    width: rect.width,
+                    height: rect.height
+                });
+            } else {
+                console.warn('Element not found for XPath:', xpath);
+            }
+        });
+
+        if (elementsInfo.length > 0) {
+            // Send all element information through WebSocket
+            socket.send(JSON.stringify(elementsInfo));
+            console.log('Element locations sent:', elementsInfo);
+        }
+    }
+
+    // Manually entered XPaths to track
+    const xpathsToTrack = [
+        "/html[1]/body[1]/div[1]/div[1]/div[1]/div[1]/div[1]",
+        "/html[1]/body[1]/div[1]/div[1]/div[1]/div[4]/div[1]",
+        "/html[1]/body[1]/div[1]/div[1]/div[1]/div[5]/div[1]",
+        "/html[1]/body[1]/div[1]/div[1]/div[1]/div[8]/div[1]",
+        "/html[1]/body[1]/div[1]/div[1]/div[1]/div[6]/div[1]",
+        "/html[1]/body[1]/div[1]/div[1]/div[1]/div[3]/div[1]",
+        "/html[1]/body[1]/div[1]/div[1]/div[1]/div[7]/div[1]",
+        "/html[1]/body[1]/div[1]/div[1]/div[1]/div[9]",
+        "/html[1]/body[1]/div[1]/div[1]/button[1]",
+        "/html[1]/body[1]/div[1]/div[1]/button[2]",
+        "/html[1]/body[1]/div[1]/div[1]/button[3]"
+    ];
+
+    // Gather and send element locations every 5 seconds
+    setInterval(() => {
+        gatherAndSendElementLocations();
+    }, 100);
+})();
