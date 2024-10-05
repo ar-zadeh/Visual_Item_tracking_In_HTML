@@ -74,11 +74,7 @@ This repository contains tools for tracking and monitoring HTML elements on web 
 
 Contributions to improve the scripts or extend functionality are welcome. Please submit a pull request or open an issue to discuss proposed changes.
 
-## License
 
-[Specify your license here, e.g., MIT, GPL, etc.]
-
-#   V i s u a l _ I t e m _ t r a c k i n g _ I n _ H T M L 
  
  #   V i s u a l _ I t e m _ t r a c k i n g _ I n _ H T M L 
  
